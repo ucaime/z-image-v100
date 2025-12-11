@@ -14,12 +14,14 @@
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-        input[type=number]::-webkit-inner-spin-button, 
-        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
         .prompt-area:focus-within { box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05); border-color: #3b82f6; }
+        
+        /* 滑杆样式优化 */
         input[type=range] { -webkit-appearance: none; background: transparent; }
-        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #3b82f6; margin-top: -6px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #3b82f6; margin-top: -6px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: transform 0.1s; }
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.1); }
         input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #e2e8f0; border-radius: 2px; }
+        input[type=range]:focus { outline: none; }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800 h-screen flex overflow-hidden selection:bg-blue-100 selection:text-blue-700">
@@ -139,15 +141,22 @@
                                         {{ ratio.label }}
                                     </button>
                                 </div>
-                                <div class="flex items-center gap-3">
-                                    <div class="relative flex-1">
-                                        <input type="number" v-model.number="form.width" step="16" class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 outline-none transition text-center font-mono font-medium">
-                                        <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-sans pointer-events-none">W</span>
+                                
+                                <div class="space-y-5 px-1">
+                                    <div>
+                                        <div class="flex justify-between items-center mb-2">
+                                            <span class="text-xs text-gray-500 font-medium">宽度 (Width)</span>
+                                            <span class="text-xs font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 min-w-[3.5rem] text-center">{{ form.width }}</span>
+                                        </div>
+                                        <input type="range" v-model.number="form.width" min="256" max="2048" step="16" class="w-full">
                                     </div>
-                                    <span class="text-gray-400 text-lg">×</span>
-                                    <div class="relative flex-1">
-                                        <input type="number" v-model.number="form.height" step="16" class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 outline-none transition text-center font-mono font-medium">
-                                        <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-sans pointer-events-none">H</span>
+                                    
+                                    <div>
+                                        <div class="flex justify-between items-center mb-2">
+                                            <span class="text-xs text-gray-500 font-medium">高度 (Height)</span>
+                                            <span class="text-xs font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 min-w-[3.5rem] text-center">{{ form.height }}</span>
+                                        </div>
+                                        <input type="range" v-model.number="form.height" min="256" max="2048" step="16" class="w-full">
                                     </div>
                                 </div>
                             </div>
@@ -195,7 +204,6 @@
                 const history = ref([]);
                 const currentImage = ref(null);
                 
-                // 分页相关
                 const page = ref(1);
                 const pageSize = 20;
                 const hasMore = ref(true);
@@ -216,7 +224,6 @@
                     guidance_scale: 1.0
                 });
 
-                // 按日期分组的计算属性
                 const groupedHistory = computed(() => {
                     const groups = {};
                     history.value.forEach(item => {
@@ -267,10 +274,8 @@
 
                 const refreshHistory = () => loadHistory(true);
 
-                // 滚动处理
                 const handleScroll = (e) => {
                     const { scrollTop, scrollHeight, clientHeight } = e.target;
-                    // 距离底部 50px 时加载
                     if (scrollTop + clientHeight >= scrollHeight - 50) {
                         loadHistory();
                     }

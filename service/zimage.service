@@ -1,0 +1,29 @@
+[Unit]
+Description=Z-Image Turbo V100
+After=network.target
+
+[Service]
+# 运行服务的用户 (root 或其他用户)
+User=root
+Group=root
+
+# 项目根目录 (Working Directory)
+WorkingDirectory=/data/ai/z-image-v100
+
+# 启动命令 (使用 Conda 环境的绝对路径 python)
+# 关键：直接指向 app/main.py
+ExecStart=/data/miniconda3/envs/zimage/bin/python app/main.py
+
+# 环境变量 (解决显存碎片的关键配置)
+Environment="PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+Environment="PYTHONUNBUFFERED=1"
+Environment="HF_ENDPOINT=https://hf-mirror.com"
+
+# 自动重启策略
+Restart=always
+RestartSec=5
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target
+

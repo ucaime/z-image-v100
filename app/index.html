@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>梦图 - AI 创意工坊</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎨</text></svg>">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <style>
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        .prompt-area:focus-within { box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05); border-color: #3b82f6; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 h-screen flex overflow-hidden selection:bg-blue-100 selection:text-blue-700">
+    <div id="app" class="flex w-full h-full">
+        
+        <div class="bg-white border-r border-gray-200 flex flex-col flex-shrink-0 z-20 transition-all duration-300 shadow-sm overflow-hidden" 
+             :class="{'w-0': !showHistory, 'w-72': showHistory}">
+            <div class="h-16 px-4 border-b border-gray-100 font-bold flex justify-between items-center text-gray-700 whitespace-nowrap">
+                <span class="flex items-center gap-2 text-sm"><i class="ri-history-line"></i> 生成历史</span>
+                <button @click="loadHistory" class="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition">
+                    <i class="ri-refresh-line"></i>
+                </button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-3 space-y-2 bg-gray-50/30">
+                <div v-for="item in history" :key="item.id" 
+                     class="p-2 rounded-lg border transition flex items-start gap-3 group relative hover:border-blue-200 hover:shadow-sm"
+                     :class="currentImage && currentImage.id === item.id ? 'bg-blue-50/50 border-blue-200' : 'bg-white border-gray-100'">
+                    
+                    <div class="flex-1 flex gap-3 cursor-pointer overflow-hidden" @click="selectHistory(item)">
+                        <div class="w-12 h-12 flex-shrink-0 rounded-md overflow-hidden bg-gray-100 border border-gray-100">
+                            <img :src="item.url" class="w-full h-full object-cover">
+                        </div>
+                        <div class="flex-1 min-w-0 py-0.5">
+                            <p class="text-xs font-medium truncate mb-1 text-gray-700" :title="item.prompt">
+                                {{ item.prompt }}
+                            </p>
+                            <p class="text-[10px] text-gray-400 font-mono">{{ item.width }}×{{ item.height }}</p>
+                        </div>
+                    </div>
+
+                    <button @click.stop="deleteHistory(item.id)" 
+                        class="absolute top-2 right-2 p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition opacity-0 group-hover:opacity-100 bg-white/80 backdrop-blur">
+                        <i class="ri-delete-bin-line"></i>
+                    </button>
+                </div>
+                
+                <div v-if="history.length === 0" class="flex flex-col items-center justify-center h-40 text-gray-400">
+                    <span class="text-xs">暂无记录</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex-1 flex flex-col min-w-0 relative bg-gray-50">
+            <header class="h-16 border-b border-gray-200 flex items-center px-6 justify-between bg-white shadow-sm z-10">
+                <div class="flex items-center gap-4">
+                    <button @click="showHistory = !showHistory" 
+                        class="p-2 rounded-md hover:bg-gray-100 text-gray-500 transition active:scale-95" 
+                        :class="{'bg-gray-100 text-blue-600': showHistory}">
+                        <i class="ri-side-bar-line text-xl"></i>
+                    </button>
+                    <div class="flex items-center gap-2">
+                        <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">M</div>
+                        <h1 class="font-bold text-xl tracking-tight text-gray-800">梦图 <span class="text-blue-600">.AI</span></h1>
+                    </div>
+                </div>
+            </header>
+
+            <div class="flex-1 flex overflow-hidden">
+                <div class="flex-1 relative flex items-center justify-center p-8 overflow-hidden bg-gray-100/50">
+                    <div class="absolute inset-0 z-0 opacity-[0.03]" style="background-image: radial-gradient(#64748b 1px, transparent 1px); background-size: 24px 24px;"></div>
+                    
+                    <div v-if="!currentImage && !loading" class="text-center opacity-40 select-none z-0">
+                        <div class="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <i class="ri-palette-line text-4xl text-gray-400"></i>
+                        </div>
+                        <p class="text-lg font-medium text-gray-500">开始创作</p>
+                    </div>
+
+                    <div v-if="loading" class="absolute inset-0 flex flex-col items-center justify-center bg-white/60 z-20 backdrop-blur-[2px]">
+                        <div class="w-12 h-12 border-4 border-gray-200 border-t-blue-600 rounded-full animate-spin"></div>
+                        <p class="mt-4 text-gray-600 font-medium tracking-wide text-sm">正在绘制中...</p>
+                    </div>
+
+                    <div v-if="currentImage" class="relative group shadow-lg rounded-lg overflow-hidden max-w-full max-h-full border border-gray-200 bg-white z-10">
+                        <img :src="currentImage.url" class="max-w-full max-h-[calc(100vh-180px)] object-contain cursor-zoom-in block" @click="showLightbox = true">
+                        
+                        <div class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur border border-gray-200 shadow-md rounded-full px-4 py-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 translate-y-4 group-hover:translate-y-0 transition-all duration-300">
+                            <a :href="currentImage.url" download class="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 hover:text-blue-600 tooltip" title="下载"><i class="ri-download-line"></i></a>
+                            <a :href="currentImage.url" target="_blank" class="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 hover:text-blue-600 tooltip" title="新窗口打开"><i class="ri-external-link-line"></i></a>
+                            <div class="w-px h-4 bg-gray-300 mx-1"></div>
+                            <button @click="reuseParams" class="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 hover:text-blue-600 tooltip" title="复用参数"><i class="ri-magic-line"></i></button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="w-[360px] bg-white border-l border-gray-200 flex flex-col z-20 shadow-sm">
+                    <div class="p-6 flex-1 overflow-y-auto">
+                        <div class="space-y-8">
+                            <div>
+                                <label class="flex justify-between items-end text-sm font-bold text-gray-800 mb-2">
+                                    <span>提示词</span>
+                                    <button @click="form.prompt = ''" class="text-xs font-normal text-gray-400 hover:text-red-500 transition">清空</button>
+                                </label>
+                                <div class="prompt-area relative border border-gray-300 rounded-xl overflow-hidden bg-white transition-all duration-200">
+                                    <textarea v-model="form.prompt" rows="8" 
+                                        class="w-full p-4 text-base text-gray-800 focus:outline-none resize-none placeholder-gray-400 leading-relaxed" 
+                                        placeholder="描述画面细节，例如：A cyberpunk city with neon lights..."></textarea>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-bold text-gray-800 mb-3">图像尺寸</label>
+                                
+                                <div class="flex gap-2 mb-4">
+                                    <button v-for="ratio in ratios" :key="ratio.label" @click="setRatio(ratio.w, ratio.h)"
+                                        class="flex-1 py-1.5 text-xs font-medium border rounded-md transition-colors"
+                                        :class="isRatio(ratio.w, ratio.h) ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'">
+                                        {{ ratio.label }}
+                                    </button>
+                                </div>
+
+                                <div class="flex items-center gap-3">
+                                    <div class="relative flex-1">
+                                        <input type="number" v-model.number="form.width" step="16"
+                                            class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 outline-none transition text-center font-mono font-medium">
+                                        <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-sans pointer-events-none">W</span>
+                                    </div>
+                                    <span class="text-gray-400 text-lg">×</span>
+                                    <div class="relative flex-1">
+                                        <input type="number" v-model.number="form.height" step="16"
+                                            class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 outline-none transition text-center font-mono font-medium">
+                                        <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-sans pointer-events-none">H</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-5">
+                                <div>
+                                    <label class="block text-sm font-bold text-gray-800 mb-2">迭代步数</label>
+                                    <input type="number" v-model.number="form.steps" min="1" max="50" 
+                                        class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 outline-none transition text-center font-mono text-gray-700">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-bold text-gray-800 mb-2">随机种子</label>
+                                    <input type="number" v-model.number="form.seed" placeholder="-1"
+                                        class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 outline-none transition text-center font-mono text-gray-700">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="p-6 border-t border-gray-100 bg-white">
+                        <button @click="generate" :disabled="loading" 
+                            class="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-md hover:shadow-lg transform active:scale-[0.99] transition-all disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed flex justify-center items-center gap-2 text-base tracking-wide">
+                            <i v-if="!loading" class="ri-sparkling-2-fill text-xl"></i>
+                            <i v-else class="ri-loader-4-line animate-spin text-xl"></i>
+                            <span>{{ loading ? '正在生成...' : '立即生成' }}</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="showLightbox && currentImage" class="fixed inset-0 z-50 bg-white/95 backdrop-blur-md flex items-center justify-center p-8 transition-opacity duration-300" @click="showLightbox = false">
+            <img :src="currentImage.url" class="max-w-full max-h-full object-contain shadow-2xl rounded" @click.stop>
+            <button class="absolute top-6 right-6 w-12 h-12 bg-gray-100 hover:bg-gray-200 rounded-full flex items-center justify-center text-gray-600 transition text-2xl" @click="showLightbox = false">&times;</button>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted, reactive } = Vue;
+
+        createApp({
+            setup() {
+                const loading = ref(false);
+                const showHistory = ref(false); // 默认折叠
+                const showLightbox = ref(false);
+                const history = ref([]);
+                const currentImage = ref(null);
+
+                const ratios = [
+                    { label: '1:1', w: 1024, h: 1024 },
+                    { label: '4:3', w: 1024, h: 768 },
+                    { label: '3:4', w: 768, h: 1024 },
+                    { label: '16:9', w: 1280, h: 720 },
+                ];
+
+                const form = reactive({
+                    prompt: "A futuristic city with flying cars, cyberpunk style, bright daylight, highly detailed, 8k resolution",
+                    width: 1024,
+                    height: 1024,
+                    steps: 8,
+                    seed: -1,
+                    guidance_scale: 1.0
+                });
+
+                const formatTime = (timeStr) => {
+                    if(!timeStr) return '';
+                    return timeStr.split(' ')[1].substring(0, 5);
+                };
+
+                const loadHistory = async () => {
+                    try {
+                        const res = await fetch('/history');
+                        history.value = await res.json();
+                    } catch (e) { console.error(e); }
+                };
+
+                const deleteHistory = async (id) => {
+                    if (!confirm("确定要删除这条记录吗？")) return;
+                    try {
+                        await fetch(`/history/${id}`, { method: 'DELETE' });
+                        if (currentImage.value && currentImage.value.id === id) {
+                            currentImage.value = null;
+                        }
+                        await loadHistory();
+                    } catch (e) { alert("删除失败"); }
+                };
+
+                const generate = async () => {
+                    if (!form.prompt.trim()) return alert("请输入提示词");
+                    if (form.width % 16 !== 0 || form.height % 16 !== 0) return alert("宽高必须是16倍数");
+                    
+                    loading.value = true;
+                    try {
+                        const res = await fetch('/generate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(form)
+                        });
+                        if (!res.ok) throw new Error((await res.json()).detail || "生成失败");
+                        
+                        const data = await res.json();
+                        currentImage.value = data;
+                        await loadHistory();
+                    } catch (e) {
+                        alert("错误: " + e.message);
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const selectHistory = (item) => currentImage.value = item;
+                
+                const reuseParams = () => {
+                    if (!currentImage.value) return;
+                    form.prompt = currentImage.value.prompt;
+                    form.width = currentImage.value.width;
+                    form.height = currentImage.value.height;
+                    form.steps = currentImage.value.steps;
+                };
+
+                const setRatio = (w, h) => { form.width = w; form.height = h; };
+                const isRatio = (w, h) => form.width === w && form.height === h;
+
+                onMounted(() => loadHistory());
+
+                return {
+                    loading, showHistory, showLightbox, history, currentImage, form, ratios,
+                    generate, loadHistory, selectHistory, deleteHistory, reuseParams, setRatio, isRatio, formatTime
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

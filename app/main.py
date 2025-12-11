@@ -57,11 +57,14 @@ def save_to_history(record):
     conn.commit()
     conn.close()
 
-def get_history_list():
+def get_history_list(page=1, size=20):
+    offset = (page - 1) * size
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute('SELECT * FROM history ORDER BY timestamp DESC LIMIT 50')
+    
+    # 修改 SQL：加入 LIMIT 和 OFFSET
+    c.execute('SELECT * FROM history ORDER BY timestamp DESC LIMIT ? OFFSET ?', (size, offset))
     rows = c.fetchall()
     conn.close()
     
@@ -75,7 +78,9 @@ def get_history_list():
             "steps": row["steps"],
             "seed": row["seed"],
             "url": f"/outputs/{row['filename']}",
-            "timestamp": row["timestamp"]
+            "timestamp": row["timestamp"],
+            "lora_name": row["lora_name"] if "lora_name" in row.keys() else None,
+            "lora_scale": row["lora_scale"] if "lora_scale" in row.keys() else 1.0
         })
     return results
 
@@ -226,8 +231,9 @@ async def read_ui():
         return f.read()
 
 @app.get("/history")
-async def read_history():
-    return get_history_list()
+async def read_history(page: int = 1, size: int = 20):
+    """支持分页的历史记录接口"""
+    return get_history_list(page, size)
 
 @app.delete("/history/{item_id}")
 async def delete_history(item_id: str):

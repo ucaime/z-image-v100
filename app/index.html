@@ -17,6 +17,9 @@
         input[type=number]::-webkit-inner-spin-button, 
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
         .prompt-area:focus-within { box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05); border-color: #3b82f6; }
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #3b82f6; margin-top: -6px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #e2e8f0; border-radius: 2px; }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800 h-screen flex overflow-hidden selection:bg-blue-100 selection:text-blue-700">
@@ -24,37 +27,49 @@
         
         <div class="bg-white border-r border-gray-200 flex flex-col flex-shrink-0 z-20 transition-all duration-300 shadow-sm overflow-hidden" 
              :class="{'w-0': !showHistory, 'w-72': showHistory}">
-            <div class="h-16 px-4 border-b border-gray-100 font-bold flex justify-between items-center text-gray-700 whitespace-nowrap">
-                <span class="flex items-center gap-2 text-sm"><i class="ri-history-line"></i> 生成历史</span>
-                <button @click="loadHistory" class="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition">
+            <div class="h-16 px-4 border-b border-gray-100 font-bold flex justify-between items-center text-gray-700 whitespace-nowrap flex-shrink-0">
+                <span class="flex items-center gap-2 text-sm"><i class="ri-history-line"></i> 生成记录</span>
+                <button @click="refreshHistory" class="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition" title="刷新列表">
                     <i class="ri-refresh-line"></i>
                 </button>
             </div>
-            <div class="flex-1 overflow-y-auto p-3 space-y-2 bg-gray-50/30">
-                <div v-for="item in history" :key="item.id" 
-                     class="p-2 rounded-lg border transition flex items-start gap-3 group relative hover:border-blue-200 hover:shadow-sm"
-                     :class="currentImage && currentImage.id === item.id ? 'bg-blue-50/50 border-blue-200' : 'bg-white border-gray-100'">
-                    
-                    <div class="flex-1 flex gap-3 cursor-pointer overflow-hidden" @click="selectHistory(item)">
-                        <div class="w-12 h-12 flex-shrink-0 rounded-md overflow-hidden bg-gray-100 border border-gray-100">
-                            <img :src="item.url" class="w-full h-full object-cover">
-                        </div>
-                        <div class="flex-1 min-w-0 py-0.5">
-                            <p class="text-xs font-medium truncate mb-1 text-gray-700" :title="item.prompt">
-                                {{ item.prompt }}
-                            </p>
-                            <p class="text-[10px] text-gray-400 font-mono">{{ item.width }}×{{ item.height }}</p>
+            
+            <div class="flex-1 overflow-y-auto p-3 space-y-4 bg-gray-50/30" @scroll="handleScroll">
+                
+                <div v-for="(group, date) in groupedHistory" :key="date">
+                    <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 px-1 sticky top-0 bg-gray-50/95 backdrop-blur py-1 z-10">
+                        {{ date }}
+                    </div>
+                    <div class="space-y-2">
+                        <div v-for="item in group" :key="item.id" 
+                             class="p-2 rounded-lg border transition flex items-start gap-3 group relative hover:border-blue-200 hover:shadow-sm"
+                             :class="currentImage && currentImage.id === item.id ? 'bg-blue-50/50 border-blue-200' : 'bg-white border-gray-100'">
+                            
+                            <div class="flex-1 flex gap-3 cursor-pointer overflow-hidden" @click="selectHistory(item)">
+                                <div class="w-12 h-12 flex-shrink-0 rounded-md overflow-hidden bg-gray-100 border border-gray-100">
+                                    <img :src="item.url" class="w-full h-full object-cover" loading="lazy">
+                                </div>
+                                <div class="flex-1 min-w-0 py-0.5">
+                                    <p class="text-xs font-medium truncate mb-1 text-gray-700" :title="item.prompt">{{ item.prompt }}</p>
+                                    <p class="text-[10px] text-gray-400 font-mono flex items-center gap-2">
+                                        <span>{{ item.width }}×{{ item.height }}</span>
+                                        <span v-if="item.lora_name" class="px-1 bg-purple-50 text-purple-600 rounded border border-purple-100 text-[9px]">LoRA</span>
+                                    </p>
+                                </div>
+                            </div>
+
+                            <button @click.stop="deleteHistory(item.id)" 
+                                class="absolute top-2 right-2 p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition opacity-0 group-hover:opacity-100 bg-white/80 backdrop-blur">
+                                <i class="ri-delete-bin-line"></i>
+                            </button>
                         </div>
                     </div>
-
-                    <button @click.stop="deleteHistory(item.id)" 
-                        class="absolute top-2 right-2 p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition opacity-0 group-hover:opacity-100 bg-white/80 backdrop-blur">
-                        <i class="ri-delete-bin-line"></i>
-                    </button>
                 </div>
-                
-                <div v-if="history.length === 0" class="flex flex-col items-center justify-center h-40 text-gray-400">
-                    <span class="text-xs">暂无记录</span>
+
+                <div class="h-10 flex items-center justify-center text-xs text-gray-400">
+                    <span v-if="loadingHistory"><i class="ri-loader-4-line animate-spin mr-1"></i> 加载更多...</span>
+                    <span v-else-if="!hasMore && history.length > 0">没有更多了</span>
+                    <span v-else-if="history.length === 0">暂无记录</span>
                 </div>
             </div>
         </div>
@@ -92,7 +107,6 @@
 
                     <div v-if="currentImage" class="relative group shadow-lg rounded-lg overflow-hidden max-w-full max-h-full border border-gray-200 bg-white z-10">
                         <img :src="currentImage.url" class="max-w-full max-h-[calc(100vh-180px)] object-contain cursor-zoom-in block" @click="showLightbox = true">
-                        
                         <div class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur border border-gray-200 shadow-md rounded-full px-4 py-2 flex items-center gap-2 opacity-0 group-hover:opacity-100 translate-y-4 group-hover:translate-y-0 transition-all duration-300">
                             <a :href="currentImage.url" download class="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 hover:text-blue-600 tooltip" title="下载"><i class="ri-download-line"></i></a>
                             <a :href="currentImage.url" target="_blank" class="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 hover:text-blue-600 tooltip" title="新窗口打开"><i class="ri-external-link-line"></i></a>
@@ -111,15 +125,32 @@
                                     <button @click="form.prompt = ''" class="text-xs font-normal text-gray-400 hover:text-red-500 transition">清空</button>
                                 </label>
                                 <div class="prompt-area relative border border-gray-300 rounded-xl overflow-hidden bg-white transition-all duration-200">
-                                    <textarea v-model="form.prompt" rows="8" 
-                                        class="w-full p-4 text-base text-gray-800 focus:outline-none resize-none placeholder-gray-400 leading-relaxed" 
-                                        placeholder="描述画面细节，例如：A cyberpunk city with neon lights..."></textarea>
+                                    <textarea v-model="form.prompt" rows="8" class="w-full p-4 text-base text-gray-800 focus:outline-none resize-none placeholder-gray-400 leading-relaxed" placeholder="描述画面细节..."></textarea>
                                 </div>
                             </div>
+                            <hr class="border-gray-100">
+                            
+                            <div>
+                                <label class="flex justify-between items-center text-sm font-bold text-gray-800 mb-3">
+                                    <span class="flex items-center gap-1"><i class="ri-puzzle-line text-purple-500"></i> LoRA 模型</span>
+                                    <button @click="refreshLoras" class="text-xs text-gray-400 hover:text-blue-600"><i class="ri-refresh-line"></i></button>
+                                </label>
+                                <div class="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                                    <select v-model="form.lora_name" class="w-full bg-white border border-gray-200 rounded-md py-2 px-3 text-sm mb-3 outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500">
+                                        <option value="">如果不选择则不使用 LoRA</option>
+                                        <option v-for="l in loras" :key="l" :value="l">{{ l }}</option>
+                                    </select>
+                                    <div class="flex items-center gap-3" :class="{'opacity-50 pointer-events-none': !form.lora_name}">
+                                        <span class="text-xs font-medium text-gray-500 w-8">强度</span>
+                                        <input type="range" v-model.number="form.lora_scale" min="0" max="2" step="0.1" class="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                                        <span class="text-xs font-mono text-gray-600 w-8 text-right">{{ form.lora_scale }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <hr class="border-gray-100">
 
                             <div>
                                 <label class="block text-sm font-bold text-gray-800 mb-3">图像尺寸</label>
-                                
                                 <div class="flex gap-2 mb-4">
                                     <button v-for="ratio in ratios" :key="ratio.label" @click="setRatio(ratio.w, ratio.h)"
                                         class="flex-1 py-1.5 text-xs font-medium border rounded-md transition-colors"
@@ -127,17 +158,14 @@
                                         {{ ratio.label }}
                                     </button>
                                 </div>
-
                                 <div class="flex items-center gap-3">
                                     <div class="relative flex-1">
-                                        <input type="number" v-model.number="form.width" step="16"
-                                            class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 outline-none transition text-center font-mono font-medium">
+                                        <input type="number" v-model.number="form.width" step="16" class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 outline-none transition text-center font-mono font-medium">
                                         <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-sans pointer-events-none">W</span>
                                     </div>
                                     <span class="text-gray-400 text-lg">×</span>
                                     <div class="relative flex-1">
-                                        <input type="number" v-model.number="form.height" step="16"
-                                            class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 outline-none transition text-center font-mono font-medium">
+                                        <input type="number" v-model.number="form.height" step="16" class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 outline-none transition text-center font-mono font-medium">
                                         <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-sans pointer-events-none">H</span>
                                     </div>
                                 </div>
@@ -146,13 +174,11 @@
                             <div class="grid grid-cols-2 gap-5">
                                 <div>
                                     <label class="block text-sm font-bold text-gray-800 mb-2">迭代步数</label>
-                                    <input type="number" v-model.number="form.steps" min="1" max="50" 
-                                        class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 outline-none transition text-center font-mono text-gray-700">
+                                    <input type="number" v-model.number="form.steps" min="1" max="50" class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 outline-none transition text-center font-mono text-gray-700">
                                 </div>
                                 <div>
                                     <label class="block text-sm font-bold text-gray-800 mb-2">随机种子</label>
-                                    <input type="number" v-model.number="form.seed" placeholder="-1"
-                                        class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 focus:bg-white focus:ring-1 focus:ring-blue-500 outline-none transition text-center font-mono text-gray-700">
+                                    <input type="number" v-model.number="form.seed" placeholder="-1" class="w-full bg-gray-50 border border-gray-200 rounded-lg py-2.5 px-3 text-sm focus:border-blue-500 outline-none transition text-center font-mono text-gray-700">
                                 </div>
                             </div>
                         </div>
@@ -177,15 +203,22 @@
     </div>
 
     <script>
-        const { createApp, ref, onMounted, reactive } = Vue;
+        const { createApp, ref, onMounted, reactive, computed } = Vue;
 
         createApp({
             setup() {
                 const loading = ref(false);
-                const showHistory = ref(false); // 默认折叠
+                const loadingHistory = ref(false);
+                const showHistory = ref(false);
                 const showLightbox = ref(false);
                 const history = ref([]);
+                const loras = ref([]);
                 const currentImage = ref(null);
+                
+                // 分页相关
+                const page = ref(1);
+                const pageSize = 20;
+                const hasMore = ref(true);
 
                 const ratios = [
                     { label: '1:1', w: 1024, h: 1024 },
@@ -200,29 +233,94 @@
                     height: 1024,
                     steps: 8,
                     seed: -1,
-                    guidance_scale: 1.0
+                    guidance_scale: 1.0,
+                    lora_name: "",
+                    lora_scale: 1.0
                 });
 
-                const formatTime = (timeStr) => {
-                    if(!timeStr) return '';
-                    return timeStr.split(' ')[1].substring(0, 5);
+                // 按日期分组的计算属性
+                const groupedHistory = computed(() => {
+                    const groups = {};
+                    history.value.forEach(item => {
+                        // timestamp 格式 "YYYY-MM-DD HH:MM:SS"
+                        const dateStr = item.timestamp.split(' ')[0];
+                        // 简单的日期转换
+                        let label = dateStr;
+                        const today = new Date().toISOString().split('T')[0];
+                        
+                        // 计算昨天的日期
+                        const yDate = new Date();
+                        yDate.setDate(yDate.getDate() - 1);
+                        const yesterday = yDate.toISOString().split('T')[0];
+
+                        if (dateStr === today) label = "今天";
+                        else if (dateStr === yesterday) label = "昨天";
+                        
+                        if (!groups[label]) groups[label] = [];
+                        groups[label].push(item);
+                    });
+                    return groups;
+                });
+
+                const loadHistory = async (isRefresh = false) => {
+                    if (loadingHistory.value) return;
+                    if (isRefresh) {
+                        page.value = 1;
+                        history.value = [];
+                        hasMore.value = true;
+                    }
+                    if (!hasMore.value) return;
+
+                    loadingHistory.value = true;
+                    try {
+                        const res = await fetch(`/history?page=${page.value}&size=${pageSize}`);
+                        const data = await res.json();
+                        
+                        if (data.length < pageSize) hasMore.value = false;
+                        
+                        if (isRefresh) {
+                            history.value = data;
+                        } else {
+                            history.value.push(...data);
+                        }
+                        page.value++;
+                    } catch (e) { 
+                        console.error(e); 
+                    } finally {
+                        loadingHistory.value = false;
+                    }
                 };
 
-                const loadHistory = async () => {
-                    try {
-                        const res = await fetch('/history');
-                        history.value = await res.json();
-                    } catch (e) { console.error(e); }
+                const refreshHistory = () => loadHistory(true);
+
+                // 滚动处理
+                const handleScroll = (e) => {
+                    const { scrollTop, scrollHeight, clientHeight } = e.target;
+                    // 距离底部 50px 时加载
+                    if (scrollTop + clientHeight >= scrollHeight - 50) {
+                        loadHistory();
+                    }
                 };
+
+                const loadLoras = async () => {
+                    try {
+                        const res = await fetch('/loras');
+                        loras.value = await res.json();
+                    } catch (e) { console.error("加载LoRA失败", e); }
+                };
+                const refreshLoras = loadLoras;
 
                 const deleteHistory = async (id) => {
                     if (!confirm("确定要删除这条记录吗？")) return;
                     try {
                         await fetch(`/history/${id}`, { method: 'DELETE' });
+                        // 从前端数组移除，避免刷新
+                        const idx = history.value.findIndex(h => h.id === id);
+                        if (idx !== -1) history.value.splice(idx, 1);
+                        
                         if (currentImage.value && currentImage.value.id === id) {
                             currentImage.value = null;
                         }
-                        await loadHistory();
                     } catch (e) { alert("删除失败"); }
                 };
 
@@ -241,7 +339,8 @@
                         
                         const data = await res.json();
                         currentImage.value = data;
-                        await loadHistory();
+                        // 生成新图后，插入到最前面
+                        history.value.unshift(data);
                     } catch (e) {
                         alert("错误: " + e.message);
                     } finally {
@@ -257,16 +356,27 @@
                     form.width = currentImage.value.width;
                     form.height = currentImage.value.height;
                     form.steps = currentImage.value.steps;
+                    if (currentImage.value.lora_name && loras.value.includes(currentImage.value.lora_name)) {
+                        form.lora_name = currentImage.value.lora_name;
+                        form.lora_scale = currentImage.value.lora_scale || 1.0;
+                    } else {
+                        form.lora_name = "";
+                        form.lora_scale = 1.0;
+                    }
                 };
 
                 const setRatio = (w, h) => { form.width = w; form.height = h; };
                 const isRatio = (w, h) => form.width === w && form.height === h;
 
-                onMounted(() => loadHistory());
+                onMounted(() => {
+                    loadHistory(true);
+                    loadLoras();
+                });
 
                 return {
-                    loading, showHistory, showLightbox, history, currentImage, form, ratios,
-                    generate, loadHistory, selectHistory, deleteHistory, reuseParams, setRatio, isRatio, formatTime
+                    loading, loadingHistory, showHistory, showLightbox, history, groupedHistory, hasMore,
+                    loras, currentImage, form, ratios,
+                    generate, refreshHistory, handleScroll, refreshLoras, selectHistory, deleteHistory, reuseParams, setRatio, isRatio
                 };
             }
         }).mount('#app');

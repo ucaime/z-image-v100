@@ -53,7 +53,6 @@
                                     <p class="text-xs font-medium truncate mb-1 text-gray-700" :title="item.prompt">{{ item.prompt }}</p>
                                     <p class="text-[10px] text-gray-400 font-mono flex items-center gap-2">
                                         <span>{{ item.width }}×{{ item.height }}</span>
-                                        <span v-if="item.lora_name" class="px-1 bg-purple-50 text-purple-600 rounded border border-purple-100 text-[9px]">LoRA</span>
                                     </p>
                                 </div>
                             </div>
@@ -128,25 +127,7 @@
                                     <textarea v-model="form.prompt" rows="8" class="w-full p-4 text-base text-gray-800 focus:outline-none resize-none placeholder-gray-400 leading-relaxed" placeholder="描述画面细节..."></textarea>
                                 </div>
                             </div>
-                            <hr class="border-gray-100">
                             
-                            <div>
-                                <label class="flex justify-between items-center text-sm font-bold text-gray-800 mb-3">
-                                    <span class="flex items-center gap-1"><i class="ri-puzzle-line text-purple-500"></i> LoRA 模型</span>
-                                    <button @click="refreshLoras" class="text-xs text-gray-400 hover:text-blue-600"><i class="ri-refresh-line"></i></button>
-                                </label>
-                                <div class="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                                    <select v-model="form.lora_name" class="w-full bg-white border border-gray-200 rounded-md py-2 px-3 text-sm mb-3 outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500">
-                                        <option value="">如果不选择则不使用 LoRA</option>
-                                        <option v-for="l in loras" :key="l" :value="l">{{ l }}</option>
-                                    </select>
-                                    <div class="flex items-center gap-3" :class="{'opacity-50 pointer-events-none': !form.lora_name}">
-                                        <span class="text-xs font-medium text-gray-500 w-8">强度</span>
-                                        <input type="range" v-model.number="form.lora_scale" min="0" max="2" step="0.1" class="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer">
-                                        <span class="text-xs font-mono text-gray-600 w-8 text-right">{{ form.lora_scale }}</span>
-                                    </div>
-                                </div>
-                            </div>
                             <hr class="border-gray-100">
 
                             <div>
@@ -212,7 +193,6 @@
                 const showHistory = ref(false);
                 const showLightbox = ref(false);
                 const history = ref([]);
-                const loras = ref([]);
                 const currentImage = ref(null);
                 
                 // 分页相关
@@ -233,22 +213,16 @@
                     height: 1024,
                     steps: 8,
                     seed: -1,
-                    guidance_scale: 1.0,
-                    lora_name: "",
-                    lora_scale: 1.0
+                    guidance_scale: 1.0
                 });
 
                 // 按日期分组的计算属性
                 const groupedHistory = computed(() => {
                     const groups = {};
                     history.value.forEach(item => {
-                        // timestamp 格式 "YYYY-MM-DD HH:MM:SS"
                         const dateStr = item.timestamp.split(' ')[0];
-                        // 简单的日期转换
                         let label = dateStr;
                         const today = new Date().toISOString().split('T')[0];
-                        
-                        // 计算昨天的日期
                         const yDate = new Date();
                         yDate.setDate(yDate.getDate() - 1);
                         const yesterday = yDate.toISOString().split('T')[0];
@@ -302,19 +276,10 @@
                     }
                 };
 
-                const loadLoras = async () => {
-                    try {
-                        const res = await fetch('/loras');
-                        loras.value = await res.json();
-                    } catch (e) { console.error("加载LoRA失败", e); }
-                };
-                const refreshLoras = loadLoras;
-
                 const deleteHistory = async (id) => {
                     if (!confirm("确定要删除这条记录吗？")) return;
                     try {
                         await fetch(`/history/${id}`, { method: 'DELETE' });
-                        // 从前端数组移除，避免刷新
                         const idx = history.value.findIndex(h => h.id === id);
                         if (idx !== -1) history.value.splice(idx, 1);
                         
@@ -339,7 +304,6 @@
                         
                         const data = await res.json();
                         currentImage.value = data;
-                        // 生成新图后，插入到最前面
                         history.value.unshift(data);
                     } catch (e) {
                         alert("错误: " + e.message);
@@ -356,13 +320,6 @@
                     form.width = currentImage.value.width;
                     form.height = currentImage.value.height;
                     form.steps = currentImage.value.steps;
-                    if (currentImage.value.lora_name && loras.value.includes(currentImage.value.lora_name)) {
-                        form.lora_name = currentImage.value.lora_name;
-                        form.lora_scale = currentImage.value.lora_scale || 1.0;
-                    } else {
-                        form.lora_name = "";
-                        form.lora_scale = 1.0;
-                    }
                 };
 
                 const setRatio = (w, h) => { form.width = w; form.height = h; };
@@ -370,13 +327,12 @@
 
                 onMounted(() => {
                     loadHistory(true);
-                    loadLoras();
                 });
 
                 return {
                     loading, loadingHistory, showHistory, showLightbox, history, groupedHistory, hasMore,
-                    loras, currentImage, form, ratios,
-                    generate, refreshHistory, handleScroll, refreshLoras, selectHistory, deleteHistory, reuseParams, setRatio, isRatio
+                    currentImage, form, ratios,
+                    generate, refreshHistory, handleScroll, selectHistory, deleteHistory, reuseParams, setRatio, isRatio
                 };
             }
         }).mount('#app');

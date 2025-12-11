@@ -1,6 +1,6 @@
 # === 忽略运行时数据 ===
 outputs/
-history.db
+database/
 
 # === 忽略大模型文件 (非常重要，防止上传几个G的文件) ===
 models/

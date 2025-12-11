@@ -19,10 +19,11 @@ PROJECT_ROOT = os.getcwd()
 
 CONFIG_FILE = os.path.join(PROJECT_ROOT, "config.json")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
-DB_FILE = os.path.join(PROJECT_ROOT, "history.db")
+DB_FILE = os.path.join(PROJECT_ROOT, "database", "history.db")
 HTML_FILE = os.path.join(BASE_DIR, "index.html")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
 
 # === 数据库管理 ===
 def init_db():

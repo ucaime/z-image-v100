@@ -11,9 +11,9 @@ import sqlite3
 import time
 import uuid
 import glob
+from typing import List
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
-# 【新增】引入 safetensors 用于手动读取和过滤权重
 from safetensors.torch import load_file
 
 # === 路径配置 ===
@@ -24,7 +24,6 @@ CONFIG_FILE = os.path.join(PROJECT_ROOT, "config.json")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
 DB_FILE = os.path.join(PROJECT_ROOT, "database", "history.db")
 HTML_FILE = os.path.join(BASE_DIR, "index.html")
-# 【新增】LoRA 目录
 LORA_DIR = os.path.join(PROJECT_ROOT, "models", "LoRA")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -35,13 +34,8 @@ os.makedirs(LORA_DIR, exist_ok=True)
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # 尝试新增字段，兼容旧数据库
-    try:
-        c.execute("ALTER TABLE history ADD COLUMN lora_name TEXT")
-        c.execute("ALTER TABLE history ADD COLUMN lora_scale REAL")
-    except:
-        pass
-        
+    try: c.execute("ALTER TABLE history ADD COLUMN lora_info TEXT")
+    except: pass
     c.execute('''
         CREATE TABLE IF NOT EXISTS history (
             id TEXT PRIMARY KEY,
@@ -52,8 +46,7 @@ def init_db():
             seed INTEGER,
             filename TEXT,
             timestamp TEXT,
-            lora_name TEXT,
-            lora_scale REAL
+            lora_info TEXT
         )
     ''')
     conn.commit()
@@ -62,13 +55,16 @@ def init_db():
 def save_to_history(record):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    # 确保 loras 是纯字典列表
+    lora_data = record.get('loras', [])
+    lora_json = json.dumps(lora_data)
     c.execute('''
-        INSERT INTO history (id, prompt, width, height, steps, seed, filename, timestamp, lora_name, lora_scale)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO history (id, prompt, width, height, steps, seed, filename, timestamp, lora_info)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         record['id'], record['prompt'], record['width'], record['height'], 
         record['steps'], record['seed'], record['filename'], record['timestamp'],
-        record.get('lora_name'), record.get('lora_scale')
+        lora_json
     ))
     conn.commit()
     conn.close()
@@ -84,6 +80,13 @@ def get_history_list(page=1, size=20):
     
     results = []
     for row in rows:
+        loras = []
+        if "lora_info" in row.keys() and row["lora_info"]:
+            try: loras = json.loads(row["lora_info"])
+            except: pass
+        elif "lora_name" in row.keys() and row["lora_name"]:
+            loras = [{"name": row["lora_name"], "scale": row["lora_scale"]}]
+
         results.append({
             "id": row["id"],
             "prompt": row["prompt"],
@@ -93,8 +96,7 @@ def get_history_list(page=1, size=20):
             "seed": row["seed"],
             "url": f"/outputs/{row['filename']}",
             "timestamp": row["timestamp"],
-            "lora_name": row["lora_name"] if "lora_name" in row.keys() else None,
-            "lora_scale": row["lora_scale"] if "lora_scale" in row.keys() else 1.0
+            "loras": loras
         })
     return results
 
@@ -112,7 +114,7 @@ def delete_history_item(item_id):
     conn.commit()
     conn.close()
 
-# === 模型加载逻辑 ===
+# === 模型加载 ===
 try:
     from diffusers.quantizers import PipelineQuantizationConfig
 except ImportError:
@@ -121,14 +123,9 @@ except ImportError:
 def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error loading config: {e}")
-    return {
-        "cache_dir": "./models",
-        "model_id": "Tongyi-MAI/Z-Image-Turbo"
-    }
+            with open(CONFIG_FILE, "r") as f: return json.load(f)
+        except Exception as e: print(f"Error loading config: {e}")
+    return {"cache_dir": "./models", "model_id": "Tongyi-MAI/Z-Image-Turbo"}
 
 model_config = load_config()
 pipe = None
@@ -161,9 +158,7 @@ def get_pipeline():
                     "bnb_4bit_compute_dtype": torch.float32,
                 }
                 if PipelineQuantizationConfig:
-                    quant_config = PipelineQuantizationConfig(
-                        quant_backend="bitsandbytes_4bit", quant_kwargs=bnb_config_kwargs
-                    )
+                    quant_config = PipelineQuantizationConfig(quant_backend="bitsandbytes_4bit", quant_kwargs=bnb_config_kwargs)
                 else:
                     from transformers import BitsAndBytesConfig
                     quant_config = BitsAndBytesConfig(**bnb_config_kwargs)
@@ -180,10 +175,8 @@ def get_pipeline():
                 print("Applying Final Optimizations...")
                 pipe.vae.to("cuda")
                 pipe.text_encoder.to("cuda")
-                try:
-                    pipe.vae.enable_tiling()
-                except:
-                    pass
+                try: pipe.vae.enable_tiling()
+                except: pass
             else:
                 pipe.to(device)
             print(f"✅ Model loaded successfully.")
@@ -197,16 +190,18 @@ def get_pipeline():
 async def lifespan(app: FastAPI):
     print("🚀 Server starting...")
     init_db()
-    try:
-        get_pipeline()
-    except Exception as e:
-        print(f"Startup load failed: {e}")
+    try: get_pipeline()
+    except Exception as e: print(f"Startup load failed: {e}")
     yield
     print("🛑 Server shutting down...")
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+class LoraConfig(BaseModel):
+    name: str
+    scale: float
 
 class GenerateRequest(BaseModel):
     prompt: str
@@ -215,11 +210,9 @@ class GenerateRequest(BaseModel):
     steps: int = 8 
     guidance_scale: float = 1.0 
     seed: int = -1
-    # 【新增】LoRA 参数
-    lora_name: str = ""
-    lora_scale: float = 1.0
+    loras: List[LoraConfig] = []
 
-# === 路由定义 ===
+# === 路由 ===
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon(): return Response(status_code=204)
 
@@ -229,8 +222,7 @@ async def read_ui():
     with open(HTML_FILE, "r", encoding="utf-8") as f: return f.read()
 
 @app.get("/history")
-async def read_history(page: int = 1, size: int = 20):
-    return get_history_list(page, size)
+async def read_history(page: int = 1, size: int = 20): return get_history_list(page, size)
 
 @app.delete("/history/{item_id}")
 async def delete_history(item_id: str):
@@ -239,76 +231,73 @@ async def delete_history(item_id: str):
 
 @app.get("/loras")
 async def list_loras():
-    """获取所有可用 LoRA"""
     loras = []
     if os.path.exists(LORA_DIR):
         files = glob.glob(os.path.join(LORA_DIR, "*.safetensors"))
-        for f in files:
-            loras.append(os.path.basename(f))
+        for f in files: loras.append(os.path.basename(f))
     return loras
 
 @app.post("/generate")
 def generate_image(req: GenerateRequest):
     if req.height % 16 != 0 or req.width % 16 != 0:
-        raise HTTPException(status_code=400, detail="宽和高必须是 16 的倍数")
+        raise HTTPException(status_code=400, detail="Dimensions must be divisible by 16")
 
     try:
         pipeline = get_pipeline()
         torch.cuda.empty_cache()
-
         device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        # === 核心：LoRA 加载逻辑 ===
-        active_lora = None
-        adapter_name = "default"
+        # === 核心：稳健的多 LoRA 加载逻辑 ===
+        active_adapters = []
+        adapter_weights = []
         
-        # 1. 卸载旧权重，保证纯净
         try:
+            # 1. 彻底卸载旧权重
             pipeline.unload_lora_weights()
-        except:
-            pass
+            
+            for idx, lora_config in enumerate(req.loras):
+                if not lora_config.name: continue
+                lora_path = os.path.join(LORA_DIR, lora_config.name)
+                if not os.path.exists(lora_path): continue
 
-        # 2. 加载新 LoRA
-        if req.lora_name:
-            lora_path = os.path.join(LORA_DIR, req.lora_name)
-            if os.path.exists(lora_path):
-                print(f"🔌 Loading LoRA: {req.lora_name}")
+                adapter_name = f"lora_{idx}"
+                print(f"🔌 Loading LoRA [{idx}]: {lora_config.name} (Scale: {lora_config.scale})")
+                
                 try:
-                    # 读取原始权重文件
+                    # 【核心修正】：统一使用 load_file -> 过滤 -> 转FP32 -> 注入
+                    # 这一步解决了 V100 上的 NaN (黑图) 问题和 TextEncoder 不匹配问题
                     state_dict = load_file(lora_path)
                     
-                    # 【关键步骤】过滤权重：只保留 U-Net 相关的，剔除 Text Encoder
-                    # SDXL LoRA 的 Text Encoder 键通常包含 "text_encoder" 或 "te0", "te1"
-                    # 而 U-Net 键通常包含 "unet"
+                    # 1. 过滤：剔除 Text Encoder 权重
+                    # 2. 转换：强制转为 FP32 (解决 NaN 核心)
                     unet_keys = {}
                     for k, v in state_dict.items():
-                        # 过滤掉 explicitly 属于 text encoder 的 key
-                        if "text_encoder" not in k and "lora_te" not in k:
-                            unet_keys[k] = v
+                        if "text" not in k and "te" not in k:
+                            unet_keys[k] = v.to(dtype=torch.float32) # <--- 关键！
                     
                     if len(unet_keys) > 0:
-                        # 加载过滤后的权重
                         pipeline.load_lora_weights(unet_keys, adapter_name=adapter_name)
-                        
-                        # 设置权重强度 (使用 set_adapters 而不是 cross_attention_kwargs)
-                        pipeline.set_adapters([adapter_name], adapter_weights=[req.lora_scale])
-                        active_lora = req.lora_name
-                        print(f"   ✅ LoRA loaded successfully (U-Net only, {len(unet_keys)} keys). Scale: {req.lora_scale}")
+                        active_adapters.append(adapter_name)
+                        adapter_weights.append(lora_config.scale)
+                        print(f"   ✅ Loaded {len(unet_keys)} keys (FP32 Converted).")
                     else:
-                        print("   ⚠️ No U-Net weights found in LoRA file.")
+                        print("   ⚠️ No valid U-Net keys found.")
                         
                 except Exception as e:
-                    print(f"   ❌ LoRA Load Failed: {e}")
-                    print("   ⚠️ Proceeding with base model only.")
-                    active_lora = None
-            else:
-                print(f"⚠️ LoRA file not found: {req.lora_name}")
+                    print(f"   ❌ Failed to load {lora_config.name}: {e}")
+
+            # 激活 Adapter
+            if active_adapters:
+                pipeline.set_adapters(active_adapters, adapter_weights=adapter_weights)
+
+        except Exception as e:
+            print(f"❌ Critical LoRA Error: {e}")
 
         seed = req.seed
         if seed == -1: seed = int(torch.randint(0, 2**32 - 1, (1,)).item())
         generator = torch.Generator(device).manual_seed(seed)
         
-        print(f"Generating: '{req.prompt}' | {req.width}x{req.height} | LoRA: {active_lora}")
+        print(f"Generating: '{req.prompt}' | {req.width}x{req.height}")
         
         with torch.inference_mode():
             image = pipeline(
@@ -318,7 +307,6 @@ def generate_image(req: GenerateRequest):
                 num_inference_steps=req.steps,
                 guidance_scale=req.guidance_scale,
                 generator=generator,
-                # 注意：这里不再传递 cross_attention_kwargs，因为已经用了 set_adapters
             ).images[0]
         
         unique_id = str(uuid.uuid4())
@@ -328,6 +316,9 @@ def generate_image(req: GenerateRequest):
         
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         
+        # 转换 Pydantic 对象为字典
+        loras_dict_list = [l.dict() for l in req.loras]
+
         record = {
             "id": unique_id,
             "prompt": req.prompt,
@@ -337,8 +328,7 @@ def generate_image(req: GenerateRequest):
             "seed": seed,
             "filename": filename,
             "timestamp": timestamp,
-            "lora_name": active_lora,
-            "lora_scale": req.lora_scale
+            "loras": loras_dict_list
         }
         save_to_history(record)
         record["url"] = f"/outputs/{filename}"

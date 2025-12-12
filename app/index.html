@@ -15,11 +15,9 @@
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
         .prompt-area:focus-within { box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05); border-color: #3b82f6; }
-        
         input[type=range] { -webkit-appearance: none; background: transparent; }
-        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #3b82f6; margin-top: -6px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: transform 0.1s; }
-        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.1); }
-        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #e2e8f0; border-radius: 2px; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%; background: #9333ea; margin-top: -5px; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #e9d5ff; border-radius: 2px; }
         input[type=range]:focus { outline: none; }
     </style>
 </head>
@@ -53,9 +51,11 @@
                             </div>
                             <div class="flex-1 min-w-0 py-0.5">
                                 <p class="text-xs font-medium truncate mb-1 text-gray-700" :title="item.prompt">{{ item.prompt }}</p>
-                                <p class="text-[10px] text-gray-400 font-mono flex items-center gap-2 flex-wrap">
+                                <p class="text-[10px] text-gray-400 font-mono flex flex-wrap gap-1">
                                     <span>{{ item.width }}×{{ item.height }}</span>
-                                    <span v-if="item.lora_name" class="px-1 bg-purple-50 text-purple-600 border border-purple-100 rounded text-[9px] truncate max-w-[80px]" :title="item.lora_name">LoRA</span>
+                                    <span v-if="item.loras && item.loras.length" class="px-1 bg-purple-50 text-purple-600 border border-purple-100 rounded text-[9px] flex items-center">
+                                        <i class="ri-puzzle-line mr-0.5"></i> {{ item.loras.length }}
+                                    </span>
                                 </p>
                             </div>
                             <button @click.stop="deleteHistory(item.id)" 
@@ -135,19 +135,31 @@
                             <div>
                                 <label class="flex justify-between items-center text-sm font-bold text-gray-800 mb-3">
                                     <span class="flex items-center gap-1"><i class="ri-puzzle-line text-purple-500"></i> LoRA 模型</span>
-                                    <button @click="refreshLoras" class="text-xs text-gray-400 hover:text-blue-600" title="刷新列表"><i class="ri-refresh-line"></i></button>
+                                    <div class="flex gap-2">
+                                        <button @click="refreshLoras" class="text-xs text-gray-400 hover:text-blue-600" title="刷新列表"><i class="ri-refresh-line"></i></button>
+                                        <button @click="addLoraSlot" class="text-xs font-medium text-purple-600 hover:text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100">+ 添加</button>
+                                    </div>
                                 </label>
-                                <div class="bg-purple-50/50 p-3 rounded-xl border border-purple-100">
-                                    <select v-model="form.lora_name" class="w-full bg-white border border-gray-200 rounded-lg py-2 px-3 text-sm mb-3 outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500">
-                                        <option value="">不使用 LoRA</option>
-                                        <option v-for="l in loras" :key="l" :value="l">{{ l }}</option>
-                                    </select>
+                                
+                                <div class="space-y-3">
+                                    <div v-for="(slot, index) in form.loras" :key="index" class="bg-purple-50/50 p-2.5 rounded-xl border border-purple-100 relative group">
+                                        <div class="flex justify-between mb-2">
+                                            <select v-model="slot.name" class="w-full bg-white border border-gray-200 rounded-lg py-1.5 px-2 text-sm outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 mr-8">
+                                                <option value="">选择模型...</option>
+                                                <option v-for="l in loras" :key="l" :value="l">{{ l }}</option>
+                                            </select>
+                                            <button @click="removeLoraSlot(index)" class="absolute top-2.5 right-2.5 text-gray-400 hover:text-red-500 transition"><i class="ri-close-circle-line"></i></button>
+                                        </div>
+                                        <div class="flex items-center gap-3 transition-opacity duration-200" :class="{'opacity-50 pointer-events-none grayscale': !slot.name}">
+                                            <span class="text-[10px] font-medium text-purple-700 w-6">强度</span>
+                                            <input type="range" v-model.number="slot.scale" min="0" max="2" step="0.1" 
+                                                class="flex-1 h-1.5 bg-purple-200 rounded-lg appearance-none cursor-pointer accent-purple-600">
+                                            <span class="text-[10px] font-mono text-purple-700 w-6 text-right font-bold">{{ slot.scale }}</span>
+                                        </div>
+                                    </div>
                                     
-                                    <div class="flex items-center gap-3 transition-opacity duration-200" :class="{'opacity-50 pointer-events-none grayscale': !form.lora_name}">
-                                        <span class="text-xs font-medium text-purple-700 w-8">强度</span>
-                                        <input type="range" v-model.number="form.lora_scale" min="0" max="2" step="0.1" 
-                                            class="flex-1 h-1.5 bg-purple-200 rounded-lg appearance-none cursor-pointer accent-purple-600">
-                                        <span class="text-xs font-mono text-purple-700 w-8 text-right font-bold">{{ form.lora_scale }}</span>
+                                    <div v-if="form.loras.length === 0" class="text-center py-2 border-2 border-dashed border-gray-100 rounded-lg text-xs text-gray-400 cursor-pointer hover:border-purple-200 hover:text-purple-500 transition" @click="addLoraSlot">
+                                        点击添加 LoRA 模型
                                     </div>
                                 </div>
                             </div>
@@ -223,7 +235,7 @@
                 const showHistory = ref(false);
                 const showLightbox = ref(false);
                 const history = ref([]);
-                const loras = ref([]); // LoRA 列表
+                const loras = ref([]);
                 const currentImage = ref(null);
                 
                 const page = ref(1);
@@ -245,9 +257,17 @@
                     steps: 8,
                     seed: -1,
                     guidance_scale: 1.0,
-                    lora_name: "", // LoRA
-                    lora_scale: 1.0
+                    // 改为数组存储多个 LoRA
+                    loras: [] 
                 });
+
+                // 增加/删除 LoRA 槽位
+                const addLoraSlot = () => {
+                    form.loras.push({ name: "", scale: 1.0 });
+                };
+                const removeLoraSlot = (index) => {
+                    form.loras.splice(index, 1);
+                };
 
                 const groupedHistory = computed(() => {
                     const groups = {};
@@ -297,14 +317,6 @@
                     }
                 };
 
-                const loadLoras = async () => {
-                    try {
-                        const res = await fetch('/loras');
-                        loras.value = await res.json();
-                    } catch (e) { console.error("加载LoRA失败", e); }
-                };
-                const refreshLoras = loadLoras;
-
                 const refreshHistory = () => loadHistory(true);
 
                 const handleScroll = (e) => {
@@ -313,6 +325,14 @@
                         loadHistory();
                     }
                 };
+
+                const loadLoras = async () => {
+                    try {
+                        const res = await fetch('/loras');
+                        loras.value = await res.json();
+                    } catch (e) { console.error("加载LoRA失败", e); }
+                };
+                const refreshLoras = loadLoras;
 
                 const deleteHistory = async (id) => {
                     if (!confirm("确定要删除这条记录吗？")) return;
@@ -358,13 +378,15 @@
                     form.height = currentImage.value.height;
                     form.steps = currentImage.value.steps;
                     
-                    // 回填 LoRA
-                    if (currentImage.value.lora_name && loras.value.includes(currentImage.value.lora_name)) {
-                        form.lora_name = currentImage.value.lora_name;
-                        form.lora_scale = currentImage.value.lora_scale || 1.0;
+                    // 恢复 LoRA 设置
+                    if (currentImage.value.loras && Array.isArray(currentImage.value.loras)) {
+                        // 过滤掉本地不存在的 LoRA (可选)
+                        form.loras = JSON.parse(JSON.stringify(currentImage.value.loras));
+                    } else if (currentImage.value.lora_name) {
+                        // 兼容旧数据
+                        form.loras = [{ name: currentImage.value.lora_name, scale: currentImage.value.lora_scale }];
                     } else {
-                        form.lora_name = "";
-                        form.lora_scale = 1.0;
+                        form.loras = [];
                     }
 
                     if(window.innerWidth < 1024) showHistory.value = false;
@@ -381,7 +403,8 @@
                 return {
                     loading, loadingHistory, showHistory, showLightbox, history, groupedHistory, hasMore,
                     currentImage, form, ratios, isMobile, loras,
-                    generate, refreshHistory, handleScroll, selectHistory, deleteHistory, reuseParams, setRatio, isRatio, refreshLoras
+                    generate, refreshHistory, handleScroll, selectHistory, deleteHistory, reuseParams, setRatio, isRatio, 
+                    refreshLoras, addLoraSlot, removeLoraSlot
                 };
             }
         }).mount('#app');

@@ -1,17 +1,20 @@
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from diffusers import DiffusionPipeline, AutoencoderKL
-from transformers import AutoModel
+from transformers import AutoModel, BitsAndBytesConfig
 import torch
 import os
 import json
 import sqlite3
 import time
 import uuid
+import glob
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
+# 【新增】引入 safetensors 用于手动读取和过滤权重
+from safetensors.torch import load_file
 
 # === 路径配置 ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -21,14 +24,24 @@ CONFIG_FILE = os.path.join(PROJECT_ROOT, "config.json")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
 DB_FILE = os.path.join(PROJECT_ROOT, "database", "history.db")
 HTML_FILE = os.path.join(BASE_DIR, "index.html")
+# 【新增】LoRA 目录
+LORA_DIR = os.path.join(PROJECT_ROOT, "models", "LoRA")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
+os.makedirs(LORA_DIR, exist_ok=True)
 
 # === 数据库管理 ===
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    # 尝试新增字段，兼容旧数据库
+    try:
+        c.execute("ALTER TABLE history ADD COLUMN lora_name TEXT")
+        c.execute("ALTER TABLE history ADD COLUMN lora_scale REAL")
+    except:
+        pass
+        
     c.execute('''
         CREATE TABLE IF NOT EXISTS history (
             id TEXT PRIMARY KEY,
@@ -38,7 +51,9 @@ def init_db():
             steps INTEGER,
             seed INTEGER,
             filename TEXT,
-            timestamp TEXT
+            timestamp TEXT,
+            lora_name TEXT,
+            lora_scale REAL
         )
     ''')
     conn.commit()
@@ -48,11 +63,12 @@ def save_to_history(record):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''
-        INSERT INTO history (id, prompt, width, height, steps, seed, filename, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO history (id, prompt, width, height, steps, seed, filename, timestamp, lora_name, lora_scale)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         record['id'], record['prompt'], record['width'], record['height'], 
-        record['steps'], record['seed'], record['filename'], record['timestamp']
+        record['steps'], record['seed'], record['filename'], record['timestamp'],
+        record.get('lora_name'), record.get('lora_scale')
     ))
     conn.commit()
     conn.close()
@@ -62,8 +78,6 @@ def get_history_list(page=1, size=20):
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    
-    # 修改 SQL：加入 LIMIT 和 OFFSET
     c.execute('SELECT * FROM history ORDER BY timestamp DESC LIMIT ? OFFSET ?', (size, offset))
     rows = c.fetchall()
     conn.close()
@@ -85,22 +99,15 @@ def get_history_list(page=1, size=20):
     return results
 
 def delete_history_item(item_id):
-    """删除指定历史记录"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # 1. 先查文件名，以便删除文件
     c.execute('SELECT filename FROM history WHERE id = ?', (item_id,))
     row = c.fetchone()
     if row:
-        filename = row[0]
-        file_path = os.path.join(OUTPUT_DIR, filename)
-        # 删除物理文件
+        file_path = os.path.join(OUTPUT_DIR, row[0])
         if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except:
-                pass
-    # 2. 删除数据库记录
+            try: os.remove(file_path)
+            except: pass
     c.execute('DELETE FROM history WHERE id = ?', (item_id,))
     conn.commit()
     conn.close()
@@ -198,16 +205,8 @@ async def lifespan(app: FastAPI):
     print("🛑 Server shutting down...")
 
 app = FastAPI(lifespan=lifespan)
-
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 class GenerateRequest(BaseModel):
     prompt: str
@@ -216,47 +215,100 @@ class GenerateRequest(BaseModel):
     steps: int = 8 
     guidance_scale: float = 1.0 
     seed: int = -1
+    # 【新增】LoRA 参数
+    lora_name: str = ""
+    lora_scale: float = 1.0
 
 # === 路由定义 ===
-
 @app.get("/favicon.ico", include_in_schema=False)
-async def favicon():
-    return Response(status_code=204)
+async def favicon(): return Response(status_code=204)
 
 @app.get("/", response_class=HTMLResponse)
 async def read_ui():
-    if not os.path.exists(HTML_FILE):
-        return HTMLResponse(content="<h1>Error: index.html not found in app directory</h1>", status_code=404)
-    with open(HTML_FILE, "r", encoding="utf-8") as f:
-        return f.read()
+    if not os.path.exists(HTML_FILE): return HTMLResponse(content="Error: index.html not found", status_code=404)
+    with open(HTML_FILE, "r", encoding="utf-8") as f: return f.read()
 
 @app.get("/history")
 async def read_history(page: int = 1, size: int = 20):
-    """支持分页的历史记录接口"""
     return get_history_list(page, size)
 
 @app.delete("/history/{item_id}")
 async def delete_history(item_id: str):
-    """删除历史记录接口"""
     delete_history_item(item_id)
     return {"status": "success"}
+
+@app.get("/loras")
+async def list_loras():
+    """获取所有可用 LoRA"""
+    loras = []
+    if os.path.exists(LORA_DIR):
+        files = glob.glob(os.path.join(LORA_DIR, "*.safetensors"))
+        for f in files:
+            loras.append(os.path.basename(f))
+    return loras
 
 @app.post("/generate")
 def generate_image(req: GenerateRequest):
     if req.height % 16 != 0 or req.width % 16 != 0:
-        raise HTTPException(status_code=400, detail="宽和高必须是 16 的倍数 (Dimensions must be divisible by 16)")
+        raise HTTPException(status_code=400, detail="宽和高必须是 16 的倍数")
 
     try:
         pipeline = get_pipeline()
         torch.cuda.empty_cache()
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        # === 核心：LoRA 加载逻辑 ===
+        active_lora = None
+        adapter_name = "default"
+        
+        # 1. 卸载旧权重，保证纯净
+        try:
+            pipeline.unload_lora_weights()
+        except:
+            pass
+
+        # 2. 加载新 LoRA
+        if req.lora_name:
+            lora_path = os.path.join(LORA_DIR, req.lora_name)
+            if os.path.exists(lora_path):
+                print(f"🔌 Loading LoRA: {req.lora_name}")
+                try:
+                    # 读取原始权重文件
+                    state_dict = load_file(lora_path)
+                    
+                    # 【关键步骤】过滤权重：只保留 U-Net 相关的，剔除 Text Encoder
+                    # SDXL LoRA 的 Text Encoder 键通常包含 "text_encoder" 或 "te0", "te1"
+                    # 而 U-Net 键通常包含 "unet"
+                    unet_keys = {}
+                    for k, v in state_dict.items():
+                        # 过滤掉 explicitly 属于 text encoder 的 key
+                        if "text_encoder" not in k and "lora_te" not in k:
+                            unet_keys[k] = v
+                    
+                    if len(unet_keys) > 0:
+                        # 加载过滤后的权重
+                        pipeline.load_lora_weights(unet_keys, adapter_name=adapter_name)
+                        
+                        # 设置权重强度 (使用 set_adapters 而不是 cross_attention_kwargs)
+                        pipeline.set_adapters([adapter_name], adapter_weights=[req.lora_scale])
+                        active_lora = req.lora_name
+                        print(f"   ✅ LoRA loaded successfully (U-Net only, {len(unet_keys)} keys). Scale: {req.lora_scale}")
+                    else:
+                        print("   ⚠️ No U-Net weights found in LoRA file.")
+                        
+                except Exception as e:
+                    print(f"   ❌ LoRA Load Failed: {e}")
+                    print("   ⚠️ Proceeding with base model only.")
+                    active_lora = None
+            else:
+                print(f"⚠️ LoRA file not found: {req.lora_name}")
+
         seed = req.seed
-        if seed == -1:
-            seed = int(torch.randint(0, 2**32 - 1, (1,)).item())
+        if seed == -1: seed = int(torch.randint(0, 2**32 - 1, (1,)).item())
         generator = torch.Generator(device).manual_seed(seed)
         
-        print(f"Generating: '{req.prompt}' | {req.width}x{req.height} | Steps: {req.steps}")
+        print(f"Generating: '{req.prompt}' | {req.width}x{req.height} | LoRA: {active_lora}")
         
         with torch.inference_mode():
             image = pipeline(
@@ -266,6 +318,7 @@ def generate_image(req: GenerateRequest):
                 num_inference_steps=req.steps,
                 guidance_scale=req.guidance_scale,
                 generator=generator,
+                # 注意：这里不再传递 cross_attention_kwargs，因为已经用了 set_adapters
             ).images[0]
         
         unique_id = str(uuid.uuid4())
@@ -283,7 +336,9 @@ def generate_image(req: GenerateRequest):
             "steps": req.steps,
             "seed": seed,
             "filename": filename,
-            "timestamp": timestamp
+            "timestamp": timestamp,
+            "lora_name": active_lora,
+            "lora_scale": req.lora_scale
         }
         save_to_history(record)
         record["url"] = f"/outputs/{filename}"

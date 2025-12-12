@@ -16,7 +16,6 @@
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
         .prompt-area:focus-within { box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05); border-color: #3b82f6; }
         
-        /* 滑杆样式 */
         input[type=range] { -webkit-appearance: none; background: transparent; }
         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #3b82f6; margin-top: -6px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: transform 0.1s; }
         input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.1); }
@@ -47,13 +46,16 @@
                         <div v-for="item in group" :key="item.id" 
                              class="p-2 rounded-lg border transition flex items-start gap-3 group relative hover:border-blue-200 hover:shadow-sm active:bg-blue-50"
                              :class="currentImage && currentImage.id === item.id ? 'bg-blue-50/50 border-blue-200' : 'bg-white border-gray-100'"
-                             @click="selectHistory(item); if(isMobile) showHistory = false;"> <div class="w-12 h-12 flex-shrink-0 rounded-md overflow-hidden bg-gray-100 border border-gray-100">
+                             @click="selectHistory(item); if(isMobile) showHistory = false;">
+                            
+                            <div class="w-12 h-12 flex-shrink-0 rounded-md overflow-hidden bg-gray-100 border border-gray-100">
                                 <img :src="item.url" class="w-full h-full object-cover" loading="lazy">
                             </div>
                             <div class="flex-1 min-w-0 py-0.5">
                                 <p class="text-xs font-medium truncate mb-1 text-gray-700" :title="item.prompt">{{ item.prompt }}</p>
-                                <p class="text-[10px] text-gray-400 font-mono flex items-center gap-2">
+                                <p class="text-[10px] text-gray-400 font-mono flex items-center gap-2 flex-wrap">
                                     <span>{{ item.width }}×{{ item.height }}</span>
+                                    <span v-if="item.lora_name" class="px-1 bg-purple-50 text-purple-600 border border-purple-100 rounded text-[9px] truncate max-w-[80px]" :title="item.lora_name">LoRA</span>
                                 </p>
                             </div>
                             <button @click.stop="deleteHistory(item.id)" 
@@ -105,7 +107,6 @@
 
                     <div v-if="currentImage" class="relative group shadow-lg rounded-lg overflow-hidden w-full h-full flex items-center justify-center border border-gray-200 bg-white z-10">
                         <img :src="currentImage.url" class="max-w-full max-h-full object-contain" @click="showLightbox = true">
-                        
                         <div class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur border border-gray-200 shadow-md rounded-full px-3 py-1.5 flex items-center gap-2 transition-all duration-300 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:translate-y-4 lg:group-hover:translate-y-0">
                             <a :href="currentImage.url" download class="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 hover:text-blue-600"><i class="ri-download-line text-lg"></i></a>
                             <div class="w-px h-4 bg-gray-300 mx-1"></div>
@@ -129,6 +130,28 @@
                                 </div>
                             </div>
                             
+                            <hr class="border-gray-100">
+
+                            <div>
+                                <label class="flex justify-between items-center text-sm font-bold text-gray-800 mb-3">
+                                    <span class="flex items-center gap-1"><i class="ri-puzzle-line text-purple-500"></i> LoRA 模型</span>
+                                    <button @click="refreshLoras" class="text-xs text-gray-400 hover:text-blue-600" title="刷新列表"><i class="ri-refresh-line"></i></button>
+                                </label>
+                                <div class="bg-purple-50/50 p-3 rounded-xl border border-purple-100">
+                                    <select v-model="form.lora_name" class="w-full bg-white border border-gray-200 rounded-lg py-2 px-3 text-sm mb-3 outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500">
+                                        <option value="">不使用 LoRA</option>
+                                        <option v-for="l in loras" :key="l" :value="l">{{ l }}</option>
+                                    </select>
+                                    
+                                    <div class="flex items-center gap-3 transition-opacity duration-200" :class="{'opacity-50 pointer-events-none grayscale': !form.lora_name}">
+                                        <span class="text-xs font-medium text-purple-700 w-8">强度</span>
+                                        <input type="range" v-model.number="form.lora_scale" min="0" max="2" step="0.1" 
+                                            class="flex-1 h-1.5 bg-purple-200 rounded-lg appearance-none cursor-pointer accent-purple-600">
+                                        <span class="text-xs font-mono text-purple-700 w-8 text-right font-bold">{{ form.lora_scale }}</span>
+                                    </div>
+                                </div>
+                            </div>
+
                             <hr class="border-gray-100">
 
                             <div>
@@ -200,18 +223,18 @@
                 const showHistory = ref(false);
                 const showLightbox = ref(false);
                 const history = ref([]);
+                const loras = ref([]); // LoRA 列表
                 const currentImage = ref(null);
                 
                 const page = ref(1);
                 const pageSize = 20;
                 const hasMore = ref(true);
-                // 简单的移动端检测
                 const isMobile = window.innerWidth < 1024;
 
                 const ratios = [
                     { label: '1:1', w: 1024, h: 1024 },
                     { label: '3:4', w: 768, h: 1024 },
-                    { label: '9:16', w: 720, h: 1280 }, // 移动端竖屏常用
+                    { label: '9:16', w: 720, h: 1280 },
                     { label: '16:9', w: 1280, h: 720 },
                 ];
 
@@ -221,7 +244,9 @@
                     height: 1024,
                     steps: 8,
                     seed: -1,
-                    guidance_scale: 1.0
+                    guidance_scale: 1.0,
+                    lora_name: "", // LoRA
+                    lora_scale: 1.0
                 });
 
                 const groupedHistory = computed(() => {
@@ -272,6 +297,14 @@
                     }
                 };
 
+                const loadLoras = async () => {
+                    try {
+                        const res = await fetch('/loras');
+                        loras.value = await res.json();
+                    } catch (e) { console.error("加载LoRA失败", e); }
+                };
+                const refreshLoras = loadLoras;
+
                 const refreshHistory = () => loadHistory(true);
 
                 const handleScroll = (e) => {
@@ -296,7 +329,6 @@
                     if (form.width % 16 !== 0 || form.height % 16 !== 0) return alert("宽高必须是16倍数");
                     
                     loading.value = true;
-                    // 移动端生成时自动关闭侧边栏
                     if(window.innerWidth < 1024) showHistory.value = false;
 
                     try {
@@ -325,7 +357,16 @@
                     form.width = currentImage.value.width;
                     form.height = currentImage.value.height;
                     form.steps = currentImage.value.steps;
-                    // 移动端复用参数后，如果侧边栏开着，自动关闭以便查看画布
+                    
+                    // 回填 LoRA
+                    if (currentImage.value.lora_name && loras.value.includes(currentImage.value.lora_name)) {
+                        form.lora_name = currentImage.value.lora_name;
+                        form.lora_scale = currentImage.value.lora_scale || 1.0;
+                    } else {
+                        form.lora_name = "";
+                        form.lora_scale = 1.0;
+                    }
+
                     if(window.innerWidth < 1024) showHistory.value = false;
                 };
 
@@ -334,12 +375,13 @@
 
                 onMounted(() => {
                     loadHistory(true);
+                    loadLoras();
                 });
 
                 return {
                     loading, loadingHistory, showHistory, showLightbox, history, groupedHistory, hasMore,
-                    currentImage, form, ratios, isMobile,
-                    generate, refreshHistory, handleScroll, selectHistory, deleteHistory, reuseParams, setRatio, isRatio
+                    currentImage, form, ratios, isMobile, loras,
+                    generate, refreshHistory, handleScroll, selectHistory, deleteHistory, reuseParams, setRatio, isRatio, refreshLoras
                 };
             }
         }).mount('#app');
